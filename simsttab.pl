@@ -1,37 +1,10 @@
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-  Simsttab -- Simplistic school time tabler
-  Copyright (C) 2005-2020 Markus Triska triska@metalevel.at
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-
-
-  For more information about this program, visit:
-
-          https://www.metalevel.at/simsttab/
-          ==================================
-
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-
-/*:- use_module(library(clpz)).*/
-/*:- use_module(library(dcgs)).*/
-/*:- use_module(library(reif)).*/
+:- use_module(library(clpz)).
+:- use_module(library(dcgs)).
+:- use_module(library(reif)).
 :- use_module(library(pairs)).
 :- use_module(library(lists)).
-:- use_module(library(clpfd)).
-/*:- use_module(library(format)).*/
+:- use_module(library(format)).
+:- use_module(library(pio)).
 
 :- dynamic(class_subject_teacher_times/4).
 :- dynamic(coupling/4).
@@ -41,44 +14,8 @@
 :- dynamic(class_freeslot/2).
 :- dynamic(room_alloc/4).
 
-:- dynamic(class_req/3).
-:- dynamic(teacher_req/3).
-:- dynamic(class_days/3).
-:- dynamic(constrain_teacher/2).
-:- dynamic(teacher_days/3).
-
 :- discontiguous(class_subject_teacher_times/4).
 :- discontiguous(class_freeslot/2).
-
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-			 Posting constraints
-
-   The most important data structure in this CSP are pairs of the form
-
-      Req-Vs
-
-   where Req is a term of the form req(C,S,T,N) (see below), and Vs is
-   a list of length N. The elements of Vs are finite domain variables
-   that denote the *time slots* of the scheduled lessons of Req. We
-   call this list of Req-Vs pairs the requirements.
-
-   To break symmetry, the elements of Vs are constrained to be
-   strictly ascending (it follows that they are all_different/1).
-
-   Further, the time slots of each teacher are constrained to be
-   all_different/1.
-
-   For each requirement, the time slots divided by slots_per_day are
-   constrained to be strictly ascending to enforce distinct days,
-   except for coupled lessons.
-
-   The time slots of each class, and of lessons occupying the same
-   room, are constrained to be all_different/1.
-
-   Labeling is performed on all slot variables.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
 
 requirements(Rs) :-
         Goal = class_subject_teacher_times(Class,Subject,Teacher,Number),
@@ -97,11 +34,11 @@ rooms(Rooms) :-
         findall(Room, room_alloc(Room,_C,_S,_Slot), Rooms0),
         sort(Rooms0, Rooms).
 
-requirements_variables(Rs, Vars) :-
+consultas(Rs, Vars) :-
         requirements(Rs),
         pairs_slots(Rs, Vars),
         slots_per_week(SPW),
-        Max = SPW - 1,
+        Max #= SPW - 1,
         Vars ins 0..Max,
         maplist(constrain_subject, Rs),
         classes(Classes),
@@ -119,7 +56,7 @@ slot_quotient(S, Q) :-
 list_without_nths(Es0, Ws, Es) :-
         phrase(without_(Ws, 0, Es0), Es).
 
-without_([], _, Es) --> list(Es).
+without_([], _, Es) --> seq(Es).
 without_([W|Ws], Pos0, [E|Es]) -->
         { Pos #= Pos0 + 1,
           zcompare(R, W, Pos0) },
@@ -168,7 +105,7 @@ constrain_teacher(Rs, Teacher) :-
 
 sameroom_var(Reqs, r(Class,Subject,Lesson), Var) :-
         memberchk(req(Class,Subject,_Teacher,_Num)-Slots, Reqs),
-        nth0(Lesson, Spairs_valueslots, Var).
+        nth0(Lesson, Slots, Var).
 
 constrain_room(Reqs, Room) :-
         findall(r(Class,Subj,Less), room_alloc(Room,Class,Subj,Less), RReqs),
@@ -178,9 +115,6 @@ constrain_room(Reqs, Room) :-
 
 strictly_ascending(Ls) :- chain(#<, Ls).
 
-list([])     --> [].
-list([E|Es]) --> [E], list(Es).
-
 class_req(C0, req(C1,_S,_T,_N)-_, T) :- =(C0, C1, T).
 
 teacher_req(T0, req(_C,_S,T1,_N)-_, T) :- =(T0,T1,T).
@@ -188,20 +122,6 @@ teacher_req(T0, req(_C,_S,T1,_N)-_, T) :- =(T0,T1,T).
 pairs_slots(Ps, Vs) :-
         pairs_values(Ps, Vs0),
         append(Vs0, Vs).
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-   Relate teachers and classes to list of days.
-
-   Each day is a list of subjects (for classes), and a list of
-   class/subject terms (for teachers). The predicate days_variables/2
-   yields a list of days with the right dimensions, where each element
-   is a free variable.
-
-   We use the atom 'free' to denote a free slot, and the compound terms
-   class_subject(C, S) and subject(S) to denote classes/subjects.
-   This clean symbolic distinction is used to support subjects
-   that are called 'free', and to improve generality and efficiency.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 days_variables(Days, Vs) :-
         slots_per_week(SPW),
@@ -237,58 +157,66 @@ v_teacher(Rs, V, N0, N) :-
         N #= N0 + 1.
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-   Print objects in roster.
+        IMRPIMIR HORARIOS
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-print_classes(Rs) :-
+horarios(Rs) :-
         classes(Cs),
-        maplist(print_class(Rs), Cs).
+        phrase_to_stream(format_classes(Cs, Rs), user_output).
 
-print_class(Rs, Class) :-
-        class_days(Rs, Class, Days0),
-        transpose(Days0, Days),
-        format("\n\n\n\nClass: ~w\n\n", [Class]),
-        print_weekdays_header,
-        maplist(align_row, Days).
+format_classes([], _) --> [].
+format_classes([Class|Classes], Rs) -->
+        { class_days(Rs, Class, Days0),
+          transpose(Days0, Days) },
+        format_("Semestre: ~w~2n", [Class]),
+        weekdays_header,
+        align_rows(Days),
+        format_classes(Classes, Rs).
 
-align_row(Cs) :-
-        maplist(align_, Cs),
-        nl.
+align_rows([]) --> "\n\n\n".
+align_rows([R|Rs]) -->
+        align_row(R),
+        "\n",
+        align_rows(Rs).
 
-align_(free)               :- align_(verbatim('')).
-align_(class_subject(C,S)) :- align_(verbatim(C/S)).
-align_(subject(S))         :- align_(verbatim(S)).
-align_(verbatim(Element))  :- format("~|~t~w~t~8+", [Element]).
+align_row([]) --> [].
+align_row([R|Rs]) -->
+        align_(R),
+        align_row(Rs).
+
+align_(free)               --> align_(verbatim('   ')).
+align_(class_subject(C,S)) --> align_(verbatim(C/S)).
+align_(subject(S))         --> align_(verbatim(S)).
+align_(verbatim(Element))  --> format_("~t~w~t~8+", [Element]).
 
 print_teachers(Rs) :-
         teachers(Ts),
-        maplist(print_teacher(Rs), Ts).
+        phrase_to_stream(format_teachers(Ts, Rs), user_output).
 
-print_teacher(Rs, Teacher) :-
-        teacher_days(Rs, Teacher, Days0),
-        transpose(Days0, Days),
-        format("\n\n\n\nTeacher: ~w\n\n", [Teacher]),
-        print_weekdays_header,
-        maplist(align_row, Days).
+format_teachers([], _) --> [].
+format_teachers([T|Ts], Rs) -->
+        { teacher_days(Rs, T, Days0),
+          transpose(Days0, Days) },
+        format_("Docente: ~w~2n", [T]),
+        weekdays_header,
+        align_rows(Days),
+        format_teachers(Ts, Rs).
 
-print_weekdays_header :-
-        maplist(with_verbatim,
-                ['Mon','Tue','Wed','Thu','Fri'],
-                Vs),
+weekdays_header -->
+        { maplist(with_verbatim,
+                  ['Lun','Mar','Mie','Jue','Vie'],
+                  Vs) },
         align_row(Vs),
-        format("~`=t~40|\n", []).
+        format_("~n~`=t~40|~n", []).
 
 with_verbatim(T, verbatim(T)).
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-   ?- consult('reqs_example.pl'), requirements_variables(Rs, Vs), labeling([ff], Vs), print_classes(Rs).
-   %@
-   %@ Class: 1a
-   %@
-   %@   Mon     Tue     Wed     Thu     Fri
-   %@ ========================================
-   %@   mat     mat     mat     mat     mat
-   %@   eng     eng     eng
-   %@    h       h
+   ?- consult('reqs_example.pl'),
+      consultas(Rs, Vs), labeling([ff], Vs), horarios(Rs).
 
+        CORDOBA JAMES
+        MIRANDA DARIEN
+        MOLINA FRANKLIN
+        PAZ CARLOS
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
